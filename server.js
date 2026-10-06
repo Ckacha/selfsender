@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const { WebClient } = require('@slack/web-api');
-const { parseRecipients, sendToRecipients } = require('./lib/slack');
+const { parseRecipients, sendToRecipients, isSlackUserId } = require('./lib/slack');
 const tokenStore = require('./lib/tokenStore');
 const allowlist = require('./lib/allowlist');
 const emojis = require('./lib/emojis');
@@ -30,6 +30,10 @@ const COOKIE_SECURE = PUBLIC_BASE_URL.startsWith('https://');
 
 const pendingLogins = new Map();
 const sessions = new Map();
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 function getCookie(req, name) {
   const header = req.headers.cookie || '';
@@ -71,7 +75,7 @@ function requireOwner(req, res, next) {
 
 function requireMember(req, res, next) {
   const session = getSession(req);
-  if (session && session.role === 'member' && allowlist.list().includes(session.slackUserId)) {
+  if (session && session.role === 'member' && isMemberInvited(session)) {
     req.session = session;
     return next();
   }
@@ -79,7 +83,11 @@ function requireMember(req, res, next) {
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated. Refresh and log in again.' });
   }
-  return res.redirect('/team/login');
+  return res.redirect('/login');
+}
+
+function isMemberInvited(session) {
+  return allowlist.isInvited(session.email, session.hcSlackId, session.slackUserId);
 }
 
 app.get('/login', (req, res) => {
@@ -92,7 +100,7 @@ app.get('/login', (req, res) => {
   url.searchParams.set('client_id', HACKCLUB_CLIENT_ID);
   url.searchParams.set('redirect_uri', HC_REDIRECT_URI);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'profile email');
+  url.searchParams.set('scope', 'profile email slack_id');
   url.searchParams.set('state', state);
   res.redirect(url.toString());
 });
@@ -138,16 +146,28 @@ app.get('/auth/callback', async (req, res) => {
     });
     const me = await meResp.json();
     const email = ((me.identity && me.identity.primary_email) || '').toLowerCase();
+    const hcSlackId = (me.identity && me.identity.slack_id) || null;
 
-    if (!ALLOWED_HACKCLUB_EMAIL || !email || email !== ALLOWED_HACKCLUB_EMAIL) {
-      console.warn(`Rejected selfsender login attempt from ${email || '(no email returned)'}`);
-      return res.status(403).send('Not authorized. This tool is restricted to a specific account.');
+    if (ALLOWED_HACKCLUB_EMAIL && email && email === ALLOWED_HACKCLUB_EMAIL) {
+      const sid = crypto.randomBytes(24).toString('hex');
+      sessions.set(sid, { role: 'owner', email, createdAt: Date.now() });
+      res.setHeader('Set-Cookie', buildSessionCookie(sid));
+      return res.redirect('/home');
     }
 
-    const sid = crypto.randomBytes(24).toString('hex');
-    sessions.set(sid, { role: 'owner', email, createdAt: Date.now() });
-    res.setHeader('Set-Cookie', buildSessionCookie(sid));
-    res.redirect('/home');
+    if (allowlist.isInvited(email, hcSlackId)) {
+      const sid = crypto.randomBytes(24).toString('hex');
+      const slackUserId = hcSlackId && tokenStore.get(hcSlackId) ? hcSlackId : null;
+      sessions.set(sid, { role: 'member', email, hcSlackId, slackUserId, createdAt: Date.now() });
+      res.setHeader('Set-Cookie', buildSessionCookie(sid));
+      return res.redirect('/team');
+    }
+
+    console.warn(`Rejected selfsender login attempt from ${email || '(no email returned)'} / ${hcSlackId || '(no slack id)'}`);
+    return res.status(403).send(
+      `Not invited. Ask the admin to invite your email <strong>${escapeHtml(email || '(none)')}</strong>`
+      + (hcSlackId ? ` or Slack ID <strong>${escapeHtml(hcSlackId)}</strong>.` : '.')
+    );
   } catch (err) {
     res.status(500).send(`Login failed: ${err.message}`);
   }
@@ -165,6 +185,10 @@ const TEAM_REDIRECT_URI = `${PUBLIC_BASE_URL}/team/oauth/callback`;
 const pendingTeamLogins = new Map();
 
 app.get('/team/login', (req, res) => {
+  res.redirect('/login');
+});
+
+app.get('/team/connect', requireMember, (req, res) => {
   if (!process.env.SLACK_CLIENT_ID) {
     return res.status(500).send('SLACK_CLIENT_ID is not set on the server. See README for setup.');
   }
@@ -178,15 +202,15 @@ app.get('/team/login', (req, res) => {
   res.redirect(url.toString());
 });
 
-app.get('/team/oauth/callback', async (req, res) => {
+app.get('/team/oauth/callback', requireMember, async (req, res) => {
   const { code, state, error } = req.query;
 
   if (error) {
-    return res.status(400).send(`Slack returned an error: ${error}`);
+    return res.status(400).send(`Slack returned an error: ${escapeHtml(error)}`);
   }
   const pending = state && pendingTeamLogins.get(state);
   if (!pending || Date.now() - pending.createdAt > LOGIN_STATE_TTL_MS) {
-    return res.status(400).send('Login link expired or invalid. Go back to <a href="/team/login">/team/login</a> and try again.');
+    return res.status(400).send('Link expired or invalid. Go back to <a href="/team/connect">/team/connect</a> and try again.');
   }
   pendingTeamLogins.delete(state);
   if (!code) {
@@ -212,20 +236,18 @@ app.get('/team/oauth/callback', async (req, res) => {
       return res.status(400).send("Slack didn't return a user token. Try again.");
     }
 
-    if (!allowlist.list().includes(slackUserId)) {
+    if (req.session.hcSlackId && req.session.hcSlackId !== slackUserId) {
       return res.status(403).send(
-        `Not authorized. Ask the admin to add your Slack ID to the allowlist: <strong>${slackUserId}</strong>`
+        `That Slack account (${escapeHtml(slackUserId)}) isn't the one linked to your Hack Club account (${escapeHtml(req.session.hcSlackId)}). `
+        + '<a href="/team/connect">Try again</a> with the right account.'
       );
     }
 
     tokenStore.set(slackUserId, userToken);
-
-    const sid = crypto.randomBytes(24).toString('hex');
-    sessions.set(sid, { role: 'member', slackUserId, createdAt: Date.now() });
-    res.setHeader('Set-Cookie', buildSessionCookie(sid));
+    req.session.slackUserId = slackUserId;
     res.redirect('/team');
   } catch (err) {
-    res.status(500).send(`Login failed: ${err.data?.error || err.message}`);
+    res.status(500).send(`Slack connect failed: ${escapeHtml(err.data?.error || err.message)}`);
   }
 });
 
@@ -238,13 +260,16 @@ app.get('/home', requireOwner, (req, res) => {
 });
 
 app.get('/team', requireMember, (req, res) => {
+  if (!req.session.slackUserId || !tokenStore.get(req.session.slackUserId)) {
+    return res.redirect('/team/connect');
+  }
   res.sendFile(path.join(__dirname, 'public', 'team.html'));
 });
 
 function requireAnyUser(req, res, next) {
   const session = getSession(req);
   const ok = session && (session.role === 'owner'
-    || (session.role === 'member' && allowlist.list().includes(session.slackUserId)));
+    || (session.role === 'member' && isMemberInvited(session)));
   if (ok) return next();
   return res.status(401).json({ error: 'Not authenticated. Refresh and log in again.' });
 }
@@ -261,17 +286,26 @@ app.get('/api/emojis', requireAnyUser, async (req, res) => {
   }
 });
 
+app.get('/api/emojis/lookup', requireAnyUser, async (req, res) => {
+  const names = String(req.query.names || '').split(',').filter(Boolean).slice(0, 200);
+  try {
+    res.json({ emojis: await emojis.lookup(names) });
+  } catch (err) {
+    res.status(502).json({ error: `Couldn't load emojis: ${err.message}` });
+  }
+});
+
 app.get('/api/allowlist', requireOwner, (req, res) => {
   res.json({ ids: allowlist.list() });
 });
 
 app.post('/api/allowlist', requireOwner, (req, res) => {
-  const { slackUserId } = req.body || {};
-  if (typeof slackUserId !== 'string' || !slackUserId.trim()) {
-    return res.status(400).json({ error: 'slackUserId is required.' });
+  const { id } = req.body || {};
+  if (typeof id !== 'string' || !id.trim()) {
+    return res.status(400).json({ error: 'An email or Slack ID is required.' });
   }
   try {
-    const ids = allowlist.add(slackUserId.trim());
+    const ids = allowlist.add(id);
     res.json({ ids });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -280,7 +314,7 @@ app.post('/api/allowlist', requireOwner, (req, res) => {
 
 app.delete('/api/allowlist/:id', requireOwner, (req, res) => {
   const ids = allowlist.remove(req.params.id);
-  tokenStore.remove(req.params.id);
+  if (isSlackUserId(req.params.id.toUpperCase())) tokenStore.remove(req.params.id.toUpperCase());
   res.json({ ids });
 });
 
@@ -289,7 +323,7 @@ app.post('/api/team/send', requireMember, async (req, res) => {
 
   const token = tokenStore.get(req.session.slackUserId);
   if (!token) {
-    return res.status(401).json({ error: 'No stored Slack token for your account. Log in again at /team/login.' });
+    return res.status(401).json({ error: 'No stored Slack token for your account. Connect Slack again at /team/connect.' });
   }
 
   if (typeof recipientsRaw !== 'string' || !recipientsRaw.trim()) {

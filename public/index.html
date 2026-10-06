@@ -69,14 +69,15 @@
 
   <h1 style="margin-top: 40px;">Team access</h1>
   <p class="hint">
-    People whose Slack ID is listed below can sign in with their own Slack
-    account at <code id="teamLink">/team</code> and send as themselves, never
-    the shared bot token, never this admin page.
+    Invite people by email or Slack ID. They log in with Hack Club at
+    <code id="teamLink">/team</code>, and their Hack Club email or linked
+    Slack ID has to match an invite. Then they connect their Slack once and
+    send as themselves, never the shared bot token, never this admin page.
   </p>
   <ul id="allowlist"></ul>
   <div class="row">
-    <input type="text" id="newAllowlistId" placeholder="Slack ID, e.g. U0123ABCD">
-    <button type="button" id="addAllowlistId" style="margin-top: 0;">Add</button>
+    <input type="text" id="newAllowlistId" placeholder="email or Slack ID, e.g. U0123ABCD">
+    <button type="button" id="addAllowlistId" style="margin-top: 0;">Invite</button>
   </div>
   <p id="allowlistError" class="hint" style="color: #c00; display: none;"></p>
 
@@ -84,7 +85,7 @@
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
-attachEmojiPicker(document.getElementById('message'));
+attachEmojiEditor(document.getElementById('message'));
 const tokenType = document.getElementById('tokenType');
 const botIdentityRow = document.getElementById('botIdentityRow');
 
@@ -175,14 +176,14 @@ async function removeFromAllowlist(id) {
 
 document.getElementById('addAllowlistId').addEventListener('click', async () => {
   const input = document.getElementById('newAllowlistId');
-  const slackUserId = input.value.trim();
+  const id = input.value.trim();
   allowlistError.style.display = 'none';
-  if (!slackUserId) return;
+  if (!id) return;
 
   const res = await fetch('/api/allowlist', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slackUserId }),
+    body: JSON.stringify({ id }),
   });
   const data = await res.json();
 

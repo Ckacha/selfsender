@@ -20,7 +20,7 @@
 <body>
   <h1>selfsender: team</h1>
   <p class="hint">Send a Slack DM to a list of recipients, as your own Slack account.</p>
-  <p class="hint">Logged in via Slack. <a href="/logout">Log out</a></p>
+  <p class="hint">Logged in via Hack Club, sending through your connected Slack. <a href="/team/connect">Reconnect Slack</a> · <a href="/logout">Log out</a></p>
 
   <form id="sendForm">
     <label for="recipients">Slack IDs / emails</label>
@@ -48,7 +48,7 @@
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
-attachEmojiPicker(document.getElementById('message'));
+attachEmojiEditor(document.getElementById('message'));
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
