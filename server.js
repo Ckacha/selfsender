@@ -7,6 +7,7 @@ const { WebClient } = require('@slack/web-api');
 const { parseRecipients, sendToRecipients } = require('./lib/slack');
 const tokenStore = require('./lib/tokenStore');
 const allowlist = require('./lib/allowlist');
+const emojis = require('./lib/emojis');
 
 const app = express();
 app.use(express.json());
@@ -70,8 +71,6 @@ function requireOwner(req, res, next) {
 
 function requireMember(req, res, next) {
   const session = getSession(req);
-  // Re-checked against the live allowlist on every request (not just at
-  // login) so removing someone cuts them off immediately.
   if (session && session.role === 'member' && allowlist.list().includes(session.slackUserId)) {
     req.session = session;
     return next();
@@ -160,7 +159,6 @@ app.get('/logout', (req, res) => {
   res.setHeader('Set-Cookie', clearSessionCookie());
   res.redirect('/');
 });
-// --- end Hack Club Auth login gate ---------------------------------------
 
 // -team login but honestly just make it slack user gated
 const TEAM_REDIRECT_URI = `${PUBLIC_BASE_URL}/team/oauth/callback`;
@@ -230,7 +228,6 @@ app.get('/team/oauth/callback', async (req, res) => {
     res.status(500).send(`Login failed: ${err.data?.error || err.message}`);
   }
 });
-// --- end team member login ------------------------------------------------
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'landing.html'));
@@ -242,6 +239,26 @@ app.get('/home', requireOwner, (req, res) => {
 
 app.get('/team', requireMember, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'team.html'));
+});
+
+function requireAnyUser(req, res, next) {
+  const session = getSession(req);
+  const ok = session && (session.role === 'owner'
+    || (session.role === 'member' && allowlist.list().includes(session.slackUserId)));
+  if (ok) return next();
+  return res.status(401).json({ error: 'Not authenticated. Refresh and log in again.' });
+}
+
+app.get('/emoji-picker.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'emoji-picker.js'));
+});
+
+app.get('/api/emojis', requireAnyUser, async (req, res) => {
+  try {
+    res.json({ emojis: await emojis.search(String(req.query.q || '')) });
+  } catch (err) {
+    res.status(502).json({ error: `Couldn't load emojis: ${err.message}` });
+  }
 });
 
 app.get('/api/allowlist', requireOwner, (req, res) => {
@@ -428,4 +445,5 @@ app.post('/api/send', requireOwner, async (req, res) => {
 
 app.listen(port, () => {
   console.log(`selfsender web UI running at http://localhost:${port}`);
+  emojis.ensureLoaded().catch((err) => console.error(`Emoji preload failed: ${err.message}`));
 });

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>selfsender — team</title>
+<title>selfsender: team</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
@@ -18,7 +18,7 @@
 </style>
 </head>
 <body>
-  <h1>selfsender — team</h1>
+  <h1>selfsender: team</h1>
   <p class="hint">Send a Slack DM to a list of recipients, as your own Slack account.</p>
   <p class="hint">Logged in via Slack. <a href="/logout">Log out</a></p>
 
@@ -29,6 +29,7 @@
 
     <label for="message">Message</label>
     <textarea id="message" rows="6" placeholder="What should be sent to these people?"></textarea>
+    <div class="hint">Type <code>:</code> + 2 letters to add a Hack Club Slack emoji.</div>
 
     <div class="row">
       <input type="checkbox" id="dryRun" checked>
@@ -43,9 +44,11 @@
 
   <pre id="results"></pre>
 
+<script src="/emoji-picker.js"></script>
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
+attachEmojiPicker(document.getElementById('message'));
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();

@@ -30,6 +30,7 @@
 
     <label for="message">Message</label>
     <textarea id="message" rows="6" placeholder="What should be sent to these people?"></textarea>
+    <div class="hint">Type <code>:</code> + 2 letters to add a Hack Club Slack emoji.</div>
 
     <label for="tokenType">Send as</label>
     <select id="tokenType">
@@ -45,7 +46,7 @@
       <label for="icon">Bot icon (optional)</label>
       <input type="text" id="icon" placeholder="emoji like :loudspeaker: or an image URL">
       <div class="hint">
-        Warning: this site only sends messages — it cannot show you replies. If a
+        Warning: this site only sends messages. It cannot show you replies. If a
         recipient responds, that reply lands in the bot's own DM with them
         inside Slack (visible to whoever has access to the bot/app there),
         not here. Check the bot's messages directly in Slack to see or
@@ -69,7 +70,7 @@
   <h1 style="margin-top: 40px;">Team access</h1>
   <p class="hint">
     People whose Slack ID is listed below can sign in with their own Slack
-    account at <code id="teamLink">/team</code> and send as themselves — never
+    account at <code id="teamLink">/team</code> and send as themselves, never
     the shared bot token, never this admin page.
   </p>
   <ul id="allowlist"></ul>
@@ -79,9 +80,11 @@
   </div>
   <p id="allowlistError" class="hint" style="color: #c00; display: none;"></p>
 
+<script src="/emoji-picker.js"></script>
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
+attachEmojiPicker(document.getElementById('message'));
 const tokenType = document.getElementById('tokenType');
 const botIdentityRow = document.getElementById('botIdentityRow');
 

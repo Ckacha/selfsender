@@ -27,7 +27,7 @@ function parseArgs(argv) {
         args.dryRun = true;
         break;
       case '--as':
-        args.tokenType = argv[++i]; // 'bot' or 'user'
+        args.tokenType = argv[++i];
         break;
       case '--username':
         args.username = argv[++i];
@@ -86,7 +86,7 @@ async function main() {
     throw new Error('--username/--icon-emoji/--icon-url require --as bot (Slack only allows per-message name/icon overrides for bot tokens with chat:write.customize).');
   }
 
-  console.log(`Preparing to send to ${recipients.length} recipient(s).${args.dryRun ? ' (dry run — nothing will be sent)' : ''}`);
+  console.log(`Preparing to send to ${recipients.length} recipient(s).${args.dryRun ? ' (dry run, nothing will be sent)' : ''}`);
   console.log('--- message preview ---');
   console.log(message);
   console.log('------------------------');
