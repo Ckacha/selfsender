@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selfsender: home</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <span class="brand">selfsender</span>
+    <a href="/home" class="active">Home</a>
+    <a href="/message">Message</a>
+    <a href="/access">Access</a>
+    <a href="/logout" class="logout">Log out</a>
+  </nav>
+  <h1>Home</h1>
+  <p class="hint">Logged in via Hack Club as <strong id="email">...</strong></p>
+
+  <ul class="status">
+    <li><span class="dot" id="botDot"></span><span>Bot token (<code>SLACK_BOT_TOKEN</code>): <span id="botText">checking...</span></span></li>
+    <li><span class="dot" id="userDot"></span><span>Your user token (<code>SLACK_USER_TOKEN</code>): <span id="userText">checking...</span></span></li>
+    <li><span class="dot ok"></span><span>Team invites: <span id="invites">...</span></span></li>
+  </ul>
+  <p class="hint" id="installHint" style="display: none;">
+    Missing a token? <a href="/slack/install">Install to Slack</a> to get them written to <code>.env</code>, then restart the server.
+  </p>
+
+  <div class="cards">
+    <a class="card" href="/message">
+      <strong>Message</strong>
+      <span class="hint">Send DMs to a list of people, as the bot or as you.</span>
+    </a>
+    <a class="card" href="/access">
+      <strong>Access</strong>
+      <span class="hint">Invite people by email or Slack ID so they can send as themselves.</span>
+    </a>
+  </div>
+
+<script>
+function setStatus(dotId, textId, ok) {
+  document.getElementById(dotId).className = `dot ${ok ? 'ok' : 'missing'}`;
+  document.getElementById(textId).textContent = ok ? 'set' : 'missing';
+}
+
+(async () => {
+  const res = await fetch('/api/status');
+  const data = await res.json();
+  document.getElementById('email').textContent = data.email;
+  setStatus('botDot', 'botText', data.botToken);
+  setStatus('userDot', 'userText', data.userToken);
+  document.getElementById('invites').textContent = data.invites === 1 ? '1 person' : `${data.invites} people`;
+  if (!data.botToken || !data.userToken) document.getElementById('installHint').style.display = 'block';
+})();
+</script>
+</body>
+</html>

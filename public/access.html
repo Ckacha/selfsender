@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selfsender: access</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <span class="brand">selfsender</span>
+    <a href="/home">Home</a>
+    <a href="/message">Message</a>
+    <a href="/access" class="active">Access</a>
+    <a href="/logout" class="logout">Log out</a>
+  </nav>
+  <h1>Access</h1>
+  <p class="hint">
+    Invite people by email or Slack ID. They log in with Hack Club at
+    <code id="teamLink">/team</code>, and their Hack Club email or linked
+    Slack ID has to match an invite. Then they connect their Slack once and
+    send as themselves, never the shared bot token, never your pages.
+  </p>
+
+  <div class="row">
+    <input type="text" id="newAllowlistId" placeholder="Slack ID or Email, e.g. U01ABCDEF2, whatthehelly@gmail.com">
+    <button type="button" id="addAllowlistId" style="margin-top: 0;">Invite</button>
+  </div>
+  <p id="allowlistError" class="hint" style="color: #c00; display: none;"></p>
+
+  <h2 style="font-size: 1.1rem; margin-top: 28px;">Invited</h2>
+  <ul id="allowlist"></ul>
+
+<script>
+document.getElementById('teamLink').textContent = `${location.origin}/team`;
+
+const allowlistEl = document.getElementById('allowlist');
+const allowlistError = document.getElementById('allowlistError');
+
+function renderAllowlist(ids) {
+  allowlistEl.innerHTML = '';
+  if (!ids.length) {
+    const li = document.createElement('li');
+    li.textContent = 'Nobody yet.';
+    li.style.color = '#666';
+    allowlistEl.appendChild(li);
+    return;
+  }
+  for (const id of ids) {
+    const li = document.createElement('li');
+    li.textContent = `${id} `;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'Remove';
+    removeBtn.style.marginTop = '0';
+    removeBtn.addEventListener('click', () => removeFromAllowlist(id));
+    li.appendChild(removeBtn);
+    allowlistEl.appendChild(li);
+  }
+}
+
+async function loadAllowlist() {
+  const res = await fetch('/api/allowlist');
+  const data = await res.json();
+  renderAllowlist(data.ids || []);
+}
+
+async function removeFromAllowlist(id) {
+  const res = await fetch(`/api/allowlist/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await res.json();
+  renderAllowlist(data.ids || []);
+}
+
+async function invite() {
+  const input = document.getElementById('newAllowlistId');
+  const id = input.value.trim();
+  allowlistError.style.display = 'none';
+  if (!id) return;
+
+  const res = await fetch('/api/allowlist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    allowlistError.textContent = data.error;
+    allowlistError.style.display = 'block';
+    return;
+  }
+
+  input.value = '';
+  renderAllowlist(data.ids || []);
+}
+
+document.getElementById('addAllowlistId').addEventListener('click', invite);
+document.getElementById('newAllowlistId').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') invite();
+});
+
+loadAllowlist();
+</script>
+</body>
+</html>

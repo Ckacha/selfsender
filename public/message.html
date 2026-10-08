@@ -2,33 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>selfsender: team</title>
+<title>selfsender: message</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-  h1 { font-size: 1.4rem; }
-  label { display: block; margin-top: 16px; font-weight: 600; }
-  textarea, input { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; font-family: inherit; font-size: 0.95rem; }
-  textarea { resize: vertical; }
-  .row { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
-  .row label { margin-top: 0; }
-  .send-options { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-  .send-options .delay { flex: 1; min-width: 180px; }
-  .test-run { display: flex; align-items: center; gap: 10px; margin-top: 0; padding: 8px 0; cursor: pointer; }
-  .test-run input { appearance: none; -webkit-appearance: none; width: 26px; height: 26px; margin: 0; padding: 0; flex: none;
-    border: 2px solid #767676; border-radius: 50%; cursor: pointer; display: grid; place-content: center; }
-  .test-run input:checked { border-color: #1a73e8; background: #1a73e8; }
-  .test-run input:checked::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
-  .test-run input:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
-  button { margin-top: 20px; padding: 10px 18px; font-size: 1rem; cursor: pointer; }
-  #results { margin-top: 24px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.85rem; background: #f5f5f5; padding: 12px; border-radius: 6px; display: none; }
-  .hint { font-size: 0.8rem; color: #666; margin-top: 4px; }
-</style>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <h1>selfsender: team</h1>
-  <p class="hint">Send a Slack DM to a list of recipients, as your own Slack account.</p>
-  <p class="hint">Logged in via Hack Club, sending through your connected Slack. <a href="/team/connect">Reconnect Slack</a> · <a href="/logout">Log out</a></p>
+  <nav class="nav">
+    <span class="brand">selfsender</span>
+    <a href="/home">Home</a>
+    <a href="/message" class="active">Message</a>
+    <a href="/access">Access</a>
+    <a href="/logout" class="logout">Log out</a>
+  </nav>
+  <h1>Message</h1>
+  <p class="hint">Send a Slack DM to a list of recipients, as the bot or as your own (user-token) account.</p>
 
   <form id="sendForm">
     <label for="recipients">Slack IDs / emails</label>
@@ -49,6 +36,28 @@
     <input type="file" id="file">
     <div class="hint">Sent along with the message. 10 MB max.</div>
 
+    <label for="tokenType">Send as</label>
+    <select id="tokenType">
+      <option value="bot">Bot (SLACK_BOT_TOKEN)</option>
+      <option value="user">User account (SLACK_USER_TOKEN)</option>
+    </select>
+
+    <div id="botIdentityRow">
+      <label for="username">Bot display name (optional)</label>
+      <input type="text" id="username" placeholder="e.g. Announcement Bot">
+      <div class="hint">Lets you tell messages from different sends apart at a glance. Requires the bot token to have the <code>chat:write.customize</code> scope.</div>
+
+      <label for="icon">Bot icon (optional)</label>
+      <input type="text" id="icon" placeholder="emoji like :loudspeaker: or an image URL">
+      <div class="hint">
+        Warning: this site only sends messages. It cannot show you replies. If a
+        recipient responds, that reply lands in the bot's own DM with them
+        inside Slack (visible to whoever has access to the bot/app there),
+        not here. Check the bot's messages directly in Slack to see or
+        answer replies.
+      </div>
+    </div>
+
     <div class="send-options">
       <div class="delay">
         <label for="delayMs">Delay between sends (ms)</label>
@@ -65,11 +74,21 @@
 
   <pre id="results"></pre>
 
+
 <script src="/emoji-picker.js"></script>
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
 attachEmojiEditor(document.getElementById('message'));
+const tokenType = document.getElementById('tokenType');
+const botIdentityRow = document.getElementById('botIdentityRow');
+
+function updateBotIdentityVisibility() {
+  botIdentityRow.style.display = tokenType.value === 'bot' ? 'block' : 'none';
+}
+tokenType.addEventListener('change', updateBotIdentityVisibility);
+
+updateBotIdentityVisibility();
 
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -93,16 +112,20 @@ form.addEventListener('submit', async (e) => {
     results.textContent = 'Error: File is too big (10 MB max).';
     return;
   }
+  const username = tokenType.value === 'bot' ? document.getElementById('username').value.trim() : '';
+  const icon = tokenType.value === 'bot' ? document.getElementById('icon').value.trim() : '';
+  const iconEmoji = icon.startsWith(':') ? icon : '';
+  const iconUrl = icon && !icon.startsWith(':') ? icon : '';
 
   results.style.display = 'block';
   results.textContent = 'Sending...';
   const file = picked ? { name: picked.name, data: await readFileAsBase64(picked) } : undefined;
 
   try {
-    const res = await fetch('/api/team/send', {
+    const res = await fetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipients, message, dryRun, delayMs, groupDm, file }),
+      body: JSON.stringify({ recipients, message, dryRun, delayMs, tokenType: tokenType.value, username, iconEmoji, iconUrl, groupDm, file }),
     });
     const data = await res.json();
 
@@ -122,6 +145,7 @@ form.addEventListener('submit', async (e) => {
     results.textContent = `Error: ${err.message}`;
   }
 });
+
 </script>
 </body>
 

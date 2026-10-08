@@ -10,13 +10,24 @@ const allowlist = require('./lib/allowlist');
 const emojis = require('./lib/emojis');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 const port = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
 const REDIRECT_URI = `${PUBLIC_BASE_URL}/slack/oauth/callback`;
-const BOT_SCOPES = 'chat:write,users:read,users:read.email,im:write,chat:write.customize';
-const USER_SCOPES = 'chat:write,users:read,users:read.email,im:write';
+const BOT_SCOPES = 'chat:write,users:read,users:read.email,im:write,mpim:write,files:write,chat:write.customize';
+const USER_SCOPES = 'chat:write,users:read,users:read.email,im:write,mpim:write,files:write';
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function parseFile(file) {
+  if (!file) return undefined;
+  if (typeof file.name !== 'string' || typeof file.data !== 'string') {
+    throw new Error('file must be { name, data } with base64 data.');
+  }
+  const data = Buffer.from(file.data, 'base64');
+  if (data.length > MAX_FILE_BYTES) throw new Error('File is too big (10 MB max).');
+  return { name: file.name.slice(0, 200), data };
+}
 
 // hc login
 const HACKCLUB_CLIENT_ID = process.env.HACKCLUB_CLIENT_ID;
@@ -256,7 +267,28 @@ app.get('/', (req, res) => {
 });
 
 app.get('/home', requireOwner, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'home.html'));
+});
+
+app.get('/message', requireOwner, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'message.html'));
+});
+
+app.get('/access', requireOwner, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'access.html'));
+});
+
+app.get('/style.css', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'style.css'));
+});
+
+app.get('/api/status', requireOwner, (req, res) => {
+  res.json({
+    email: req.session.email,
+    botToken: Boolean(process.env.SLACK_BOT_TOKEN),
+    userToken: Boolean(process.env.SLACK_USER_TOKEN),
+    invites: allowlist.list().length,
+  });
 });
 
 app.get('/team', requireMember, (req, res) => {
@@ -319,7 +351,7 @@ app.delete('/api/allowlist/:id', requireOwner, (req, res) => {
 });
 
 app.post('/api/team/send', requireMember, async (req, res) => {
-  const { recipients: recipientsRaw, message, dryRun, delayMs } = req.body || {};
+  const { recipients: recipientsRaw, message, dryRun, delayMs, groupDm } = req.body || {};
 
   const token = tokenStore.get(req.session.slackUserId);
   if (!token) {
@@ -338,6 +370,13 @@ app.post('/api/team/send', requireMember, async (req, res) => {
     return res.status(400).json({ error: 'No valid recipients found.' });
   }
 
+  let file;
+  try {
+    file = parseFile(req.body.file);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
   try {
     const results = await sendToRecipients({
       token,
@@ -345,6 +384,8 @@ app.post('/api/team/send', requireMember, async (req, res) => {
       message: message.trim(),
       delayMs: Number(delayMs) > 0 ? Number(delayMs) : 1200,
       dryRun: Boolean(dryRun),
+      groupDm: Boolean(groupDm),
+      file,
     });
     res.json(results);
   } catch (err) {
@@ -435,7 +476,7 @@ app.get('/slack/oauth/callback', requireOwner, async (req, res) => {
 });
 
 app.post('/api/send', requireOwner, async (req, res) => {
-  const { recipients: recipientsRaw, message, dryRun, delayMs, tokenType, username, iconEmoji, iconUrl } = req.body || {};
+  const { recipients: recipientsRaw, message, dryRun, delayMs, tokenType, username, iconEmoji, iconUrl, groupDm } = req.body || {};
 
   const asUser = tokenType === 'user';
   const token = asUser ? process.env.SLACK_USER_TOKEN : process.env.SLACK_BOT_TOKEN;
@@ -456,6 +497,13 @@ app.post('/api/send', requireOwner, async (req, res) => {
     return res.status(400).json({ error: 'No valid recipients found.' });
   }
 
+  let file;
+  try {
+    file = parseFile(req.body.file);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
   if ((username || iconEmoji || iconUrl) && asUser) {
     return res.status(400).json({ error: 'username/iconEmoji/iconUrl require tokenType "bot" (Slack only allows per-message name/icon overrides for bot tokens with chat:write.customize).' });
   }
@@ -470,6 +518,8 @@ app.post('/api/send', requireOwner, async (req, res) => {
       username: username || undefined,
       iconEmoji: iconEmoji || undefined,
       iconUrl: iconUrl || undefined,
+      groupDm: Boolean(groupDm),
+      file,
     });
     res.json(results);
   } catch (err) {
