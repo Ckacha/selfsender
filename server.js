@@ -9,7 +9,15 @@ const tokenStore = require('./lib/tokenStore');
 const allowlist = require('./lib/allowlist');
 const emojis = require('./lib/emojis');
 
+// this might not work but uh we ball
+const mcpAuth = require('./lib/mcpAuth');
+const { createMcpServer } = require('./lib/mcpServer');
+const { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } = require('@modelcontextprotocol/sdk/server/auth/router.js');
+const { requireBearerAuth } = require('@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js');
+const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+
 const app = express();
+app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '15mb' }));
 
 const port = process.env.PORT || 3000;
@@ -97,6 +105,40 @@ function requireMember(req, res, next) {
   return res.redirect('/login');
 }
 
+function userFor(email, hcSlackId) {
+  if (ALLOWED_HACKCLUB_EMAIL && email && email === ALLOWED_HACKCLUB_EMAIL) return { role: 'owner', email, hcSlackId };
+  if (allowlist.isInvited(email, hcSlackId)) return { role: 'member', email, hcSlackId };
+
+  return null;
+}
+
+function isUserAllowed(user) {
+  if (user.role === 'owner') return Boolean(ALLOWED_HACKCLUB_EMAIL) && user.email === ALLOWED_HACKCLUB_EMAIL;
+  return allowlist.isInvited(user.email, user.hcSlackId, memberSlackId(user));
+
+}
+
+function memberSlackId(user) {
+  if (user.hcSlackId && tokenStore.get(user.hcSlackId)) return user.hcSlackId;
+  return tokenStore.slackIdForEmail(user.email);
+
+}
+
+function resolveSendToken(user, sendAs) {
+  if (user.role === 'owner') {
+    const token = sendAs === 'user' ? process.env.SLACK_USER_TOKEN : process.env.SLACK_BOT_TOKEN;
+    const varName = sendAs === 'user' ? 'SLACK_USER_TOKEN' : 'SLACK_BOT_TOKEN';
+    return token ? { token } : { error: `${varName} is not set on the server.` };
+  }
+
+  const slackUserId = memberSlackId(user);
+  const token = slackUserId && tokenStore.get(slackUserId);
+  return token
+    ? { token, slackUserId }
+    : { error: "Your Slack isn't connected yet. Log in on the website at /team once to connect it, then try again." };
+
+}
+
 function isMemberInvited(session) {
   return allowlist.isInvited(session.email, session.hcSlackId, session.slackUserId);
 }
@@ -105,8 +147,9 @@ app.get('/login', (req, res) => {
   if (!HACKCLUB_CLIENT_ID) {
     return res.status(500).send('HACKCLUB_CLIENT_ID is not set on the server. See README for setup.');
   }
+  const mcp = typeof req.query.mcp === 'string' && mcpAuth.hasPending(req.query.mcp) ? req.query.mcp : null;
   const state = crypto.randomBytes(16).toString('hex');
-  pendingLogins.set(state, { createdAt: Date.now() });
+  pendingLogins.set(state, { createdAt: Date.now(), mcp });
   const url = new URL(`${HACKCLUB_AUTH_BASE}/oauth/authorize`);
   url.searchParams.set('client_id', HACKCLUB_CLIENT_ID);
   url.searchParams.set('redirect_uri', HC_REDIRECT_URI);
@@ -159,16 +202,24 @@ app.get('/auth/callback', async (req, res) => {
     const email = ((me.identity && me.identity.primary_email) || '').toLowerCase();
     const hcSlackId = (me.identity && me.identity.slack_id) || null;
 
-    if (ALLOWED_HACKCLUB_EMAIL && email && email === ALLOWED_HACKCLUB_EMAIL) {
+    const user = userFor(email, hcSlackId);
+
+    if (user && pending.mcp) {
+      const redirectUrl = mcpAuth.completeAuthorization(pending.mcp, user);
+      if (!redirectUrl) return res.status(400).send('That sign-in link expired. Start the connection again from your AI app.');
+      return res.redirect(redirectUrl);
+    }
+
+    if (user && user.role === 'owner') {
       const sid = crypto.randomBytes(24).toString('hex');
       sessions.set(sid, { role: 'owner', email, createdAt: Date.now() });
       res.setHeader('Set-Cookie', buildSessionCookie(sid));
       return res.redirect('/home');
     }
 
-    if (allowlist.isInvited(email, hcSlackId)) {
+    if (user) {
       const sid = crypto.randomBytes(24).toString('hex');
-      const slackUserId = hcSlackId && tokenStore.get(hcSlackId) ? hcSlackId : null;
+      const slackUserId = memberSlackId(user) || null;
       sessions.set(sid, { role: 'member', email, hcSlackId, slackUserId, createdAt: Date.now() });
       res.setHeader('Set-Cookie', buildSessionCookie(sid));
       return res.redirect('/team');
@@ -255,11 +306,52 @@ app.get('/team/oauth/callback', requireMember, async (req, res) => {
     }
 
     tokenStore.set(slackUserId, userToken);
+    tokenStore.linkEmail(req.session.email, slackUserId);
     req.session.slackUserId = slackUserId;
     res.redirect('/team');
   } catch (err) {
     res.status(500).send(`Slack connect failed: ${escapeHtml(err.data?.error || err.message)}`);
   }
+});
+
+const MCP_URL = new URL('/api/mcp', PUBLIC_BASE_URL);
+const mcpProvider = mcpAuth.createProvider({ isAllowed: isUserAllowed });
+
+app.use(mcpAuthRouter({
+  provider: mcpProvider,
+  issuerUrl: new URL(PUBLIC_BASE_URL),
+  resourceServerUrl: MCP_URL,
+  resourceName: 'selfsender',
+
+}));
+
+const requireMcpAuth = requireBearerAuth({
+  verifier: mcpProvider,
+  resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(MCP_URL),
+
+});
+
+app.post('/api/mcp', requireMcpAuth, async (req, res) => {
+  const server = createMcpServer(req.auth.extra.user, { resolveSendToken });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => {
+    transport.close();
+    server.close();
+  });
+
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error('MCP request failed:', err);
+    if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
+  }
+
+});
+
+
+app.all('/api/mcp', requireMcpAuth, (req, res) => {
+  res.status(405).set('Allow', 'POST').json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null });
 });
 
 app.get('/', (req, res) => {
@@ -276,6 +368,14 @@ app.get('/message', requireOwner, (req, res) => {
 
 app.get('/access', requireOwner, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'access.html'));
+});
+
+app.get('/settings', requireOwner, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+});
+
+app.get('/ai-connect.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'ai-connect.js'));
 });
 
 app.get('/style.css', (req, res) => {

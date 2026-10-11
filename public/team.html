@@ -65,11 +65,16 @@
 
   <pre id="results"></pre>
 
+  <h2 style="font-size: 1.1rem; margin-top: 40px;">Connect your AI</h2>
+  <div id="aiConnect"></div>
+
 <script src="/emoji-picker.js"></script>
+<script src="/ai-connect.js"></script>
 <script>
 const form = document.getElementById('sendForm');
 const results = document.getElementById('results');
 attachEmojiEditor(document.getElementById('message'));
+renderAiConnect(document.getElementById('aiConnect'));
 
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {

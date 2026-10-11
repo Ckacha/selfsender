@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selfsender: settings</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <span class="brand">selfsender</span>
+    <a href="/home">Home</a>
+    <a href="/message">Message</a>
+    <a href="/access">Access</a>
+    <a href="/settings" class="active">Settings</a>
+    <a href="/logout" class="logout">Log out</a>
+  </nav>
+  <h1>Settings</h1>
+
+  <h2 style="font-size: 1.1rem; margin-top: 24px;">Connect your AI</h2>
+  <div id="aiConnect"></div>
+
+<script src="/ai-connect.js"></script>
+<script>
+renderAiConnect(document.getElementById('aiConnect'));
+</script>
+</body>
+</html>
