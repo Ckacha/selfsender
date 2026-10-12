@@ -5,4 +5,7 @@ agents/
 recipients.csv
 slack-tokens.json
 team-allowlist.json
+team-logins.json
+team-invites.json
 mcp-auth.json
+dist/

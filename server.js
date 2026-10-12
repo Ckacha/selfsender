@@ -4,9 +4,11 @@ const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const { WebClient } = require('@slack/web-api');
-const { parseRecipients, sendToRecipients, isSlackUserId } = require('./lib/slack');
+const { parseRecipients, sendToRecipients, isSlackUserId, profileFor } = require('./lib/slack');
 const tokenStore = require('./lib/tokenStore');
 const allowlist = require('./lib/allowlist');
+const logins = require('./lib/logins');
+const invites = require('./lib/invites');
 const emojis = require('./lib/emojis');
 
 // this might not work but uh we ball
@@ -203,6 +205,7 @@ app.get('/auth/callback', async (req, res) => {
     const hcSlackId = (me.identity && me.identity.slack_id) || null;
 
     const user = userFor(email, hcSlackId);
+    if (user && user.role === 'member') logins.record(allowlist.matching(email, hcSlackId));
 
     if (user && pending.mcp) {
       const redirectUrl = mcpAuth.completeAuthorization(pending.mcp, user);
@@ -354,33 +357,21 @@ app.all('/api/mcp', requireMcpAuth, (req, res) => {
   res.status(405).set('Allow', 'POST').json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null });
 });
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'landing.html'));
-});
+const DIST_DIR = path.join(__dirname, 'dist');
 
-app.get('/home', requireOwner, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'home.html'));
-});
+function sendApp(req, res) {
+  res.sendFile(path.join(DIST_DIR, 'index.html'), (err) => {
+    if (err) res.status(500).send('The web app is not built yet. Run "npm run build" and reload.');
+  });
+}
 
-app.get('/message', requireOwner, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'message.html'));
-});
+app.use('/assets', express.static(path.join(DIST_DIR, 'assets'), { immutable: true, maxAge: '1y' }));
 
-app.get('/access', requireOwner, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'access.html'));
-});
-
-app.get('/settings', requireOwner, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'settings.html'));
-});
-
-app.get('/ai-connect.js', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'ai-connect.js'));
-});
-
-app.get('/style.css', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'style.css'));
-});
+app.get('/', sendApp);
+app.get('/home', requireOwner, sendApp);
+app.get('/message', requireOwner, sendApp);
+app.get('/access', requireOwner, sendApp);
+app.get('/settings', requireOwner, sendApp);
 
 app.get('/api/status', requireOwner, (req, res) => {
   res.json({
@@ -395,7 +386,7 @@ app.get('/team', requireMember, (req, res) => {
   if (!req.session.slackUserId || !tokenStore.get(req.session.slackUserId)) {
     return res.redirect('/team/connect');
   }
-  res.sendFile(path.join(__dirname, 'public', 'team.html'));
+  sendApp(req, res);
 });
 
 function requireAnyUser(req, res, next) {
@@ -406,8 +397,14 @@ function requireAnyUser(req, res, next) {
   return res.status(401).json({ error: 'Not authenticated. Refresh and log in again.' });
 }
 
-app.get('/emoji-picker.js', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'emoji-picker.js'));
+app.get('/api/profile', requireAnyUser, async (req, res) => {
+  const session = getSession(req);
+  const lookup = (token) => profileFor(token).catch(() => null);
+  const [me, bot] = await Promise.all([
+    lookup(resolveSendToken(session, 'user').token),
+    session.role === 'owner' ? lookup(process.env.SLACK_BOT_TOKEN) : null,
+  ]);
+  res.json({ me, bot });
 });
 
 app.get('/api/emojis', requireAnyUser, async (req, res) => {
@@ -427,27 +424,78 @@ app.get('/api/emojis/lookup', requireAnyUser, async (req, res) => {
   }
 });
 
+function accessList() {
+  const ids = allowlist.list();
+  const people = ids.map((id) => {
+    const lastLogin = logins.get(id);
+    const connected = Boolean(isSlackUserId(id) ? tokenStore.get(id) : tokenStore.slackIdForEmail(id));
+    return { id, lastLogin, loggedIn: Boolean(lastLogin) || connected };
+  });
+  return { ids, people };
+}
+
 app.get('/api/allowlist', requireOwner, (req, res) => {
-  res.json({ ids: allowlist.list() });
+  res.json(accessList());
 });
 
-app.post('/api/allowlist', requireOwner, (req, res) => {
+app.post('/api/allowlist', requireOwner, async (req, res) => {
   const { id } = req.body || {};
   if (typeof id !== 'string' || !id.trim()) {
     return res.status(400).json({ error: 'An email or Slack ID is required.' });
   }
+  const alreadyInvited = allowlist.isInvited(id);
   try {
-    const ids = allowlist.add(id);
-    res.json({ ids });
+    allowlist.add(id);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
+
+  let notice = 'Already invited.';
+  if (!alreadyInvited) {
+    try {
+      await invites.send(allowlist.normalize(id), PUBLIC_BASE_URL);
+      notice = 'Invited. The bot sent them a Slack DM.';
+    } catch (err) {
+      notice = `Invited, but the bot couldn't DM them on Slack (${err.data?.error || err.message}).`;
+    }
+  }
+  res.json({ ...accessList(), notice });
 });
 
 app.delete('/api/allowlist/:id', requireOwner, (req, res) => {
-  const ids = allowlist.remove(req.params.id);
+  allowlist.remove(req.params.id);
+  logins.remove(allowlist.normalize(req.params.id));
+  invites.removeForEntry(allowlist.normalize(req.params.id));
   if (isSlackUserId(req.params.id.toUpperCase())) tokenStore.remove(req.params.id.toUpperCase());
-  res.json({ ids });
+  res.json(accessList());
+});
+
+app.get('/invite/accept/:token', async (req, res) => {
+  await invites.respond(req.params.token, 'accepted', PUBLIC_BASE_URL);
+  res.redirect('/login');
+});
+
+app.post('/slack/interactions', express.raw({ type: 'application/x-www-form-urlencoded', limit: '1mb' }), async (req, res) => {
+  const signingSecret = process.env.SLACK_SIGNING_SECRET || process.env.SIGNING_SECRET;
+  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
+  if (!invites.verifySignature(signingSecret, req.headers['x-slack-request-timestamp'], req.headers['x-slack-signature'], rawBody)) {
+    return res.status(401).send('Bad signature.');
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(new URLSearchParams(rawBody).get('payload'));
+  } catch (err) {
+    return res.status(400).send('Bad payload.');
+  }
+  res.status(200).end();
+
+  const action = payload && payload.type === 'block_actions' && payload.actions && payload.actions[0];
+  if (!action || action.action_id !== invites.DECLINE_ACTION) return;
+
+  const invite = invites.get(action.value);
+  if (!invite || !payload.user || payload.user.id !== invite.slackUserId) return;
+  await invites.respond(action.value, 'declined', PUBLIC_BASE_URL);
 });
 
 app.post('/api/team/send', requireMember, async (req, res) => {
