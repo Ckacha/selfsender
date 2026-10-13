@@ -25,7 +25,7 @@ app.use(express.json({ limit: '15mb' }));
 const port = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
 const REDIRECT_URI = `${PUBLIC_BASE_URL}/slack/oauth/callback`;
-const BOT_SCOPES = 'chat:write,users:read,users:read.email,im:write,mpim:write,files:write,chat:write.customize';
+const BOT_SCOPES = 'chat:write,users:read,users:read.email,im:write,mpim:write,files:write,chat:write.customize,emoji:read';
 const USER_SCOPES = 'chat:write,users:read,users:read.email,im:write,mpim:write,files:write';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
