@@ -35,6 +35,19 @@
     people = data.people || [];
   }
 
+  async function resend(id) {
+    error = '';
+    notice = '';
+    const res = await fetch(`/api/allowlist/${encodeURIComponent(id)}/resend`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      error = data.error;
+      return;
+    }
+    notice = data.notice || '';
+    people = data.people || [];
+  }
+
   async function remove(id) {
     const res = await fetch(`/api/allowlist/${encodeURIComponent(id)}`, { method: 'DELETE' });
     people = (await res.json()).people || [];
@@ -57,9 +70,9 @@
   <h1>Access</h1>
   <p class="hint">
     Invite people by email or Slack ID. They log in with Hack Club at
-    <code>{location.origin}/team</code>, and their Hack Club email or linked
+    <code>{location.origin}</code>, and their Hack Club email or linked
     Slack ID has to match an invite. Then they connect their Slack once and
-    send as themselves, never the shared bot token, never your pages.
+    send as themselves, or through the bot under their own name and picture. They never see your pages.
     The bot DMs each new invite on Slack with Accept and Decline buttons, then tells you what they picked.
   </p>
 
@@ -87,6 +100,9 @@
           <strong>{person.id}</strong>
           <span class="hint">{person.invite ? `${INVITE_LABELS[person.invite]} · ` : ''}{loginLabel(person)}</span>
         </span>
+        {#if person.invite === 'declined'}
+          <button type="button" onclick={() => resend(person.id)}>Send again</button>
+        {/if}
         <button type="button" onclick={() => remove(person.id)}>Remove</button>
       </li>
     {:else}

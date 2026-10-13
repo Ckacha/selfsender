@@ -19,7 +19,7 @@
   let dryRun = $state(true);
   let results = $state(null);
 
-  const asBot = $derived(owner && tokenType === 'bot');
+  const asBot = $derived(tokenType === 'bot');
   const tooBig = $derived(Boolean(picked) && picked.size > MAX_FILE_BYTES);
 
   function formatSize(bytes) {
@@ -62,9 +62,9 @@
     results = 'Sending...';
     const body = { recipients, message, dryRun, delayMs, groupDm: sendMode === 'group' };
     if (picked) body.file = { name: picked.name, data: await readFileAsBase64(picked) };
+    body.tokenType = tokenType;
     if (owner) {
       const trimmedIcon = asBot ? icon.trim() : '';
-      body.tokenType = tokenType;
       body.username = asBot ? username.trim() : '';
       body.iconEmoji = trimmedIcon.startsWith(':') ? trimmedIcon : '';
       body.iconUrl = trimmedIcon && !trimmedIcon.startsWith(':') ? trimmedIcon : '';
@@ -136,28 +136,27 @@
     <option value="group">One group DM with everyone (max 8 people)</option>
   </select>
 
-  {#if owner}
-    <label for="tokenType">Send as</label>
-    <select id="tokenType" bind:value={tokenType}>
-      <option value="user">User account (SLACK_USER_TOKEN)</option>
-      <option value="bot">Bot (SLACK_BOT_TOKEN)</option>
-    </select>
+  <label for="tokenType">Send as</label>
+  <select id="tokenType" bind:value={tokenType}>
+    <option value="user">{owner ? 'User account (SLACK_USER_TOKEN)' : 'Your Slack account'}</option>
+    <option value="bot">{owner ? 'Bot (SLACK_BOT_TOKEN)' : 'The bot, shown with your name and picture'}</option>
+  </select>
 
-    {#if asBot}
+  {#if asBot}
+    {#if owner}
       <label for="username">Bot display name (optional)</label>
-      <input type="text" id="username" placeholder="e.g. Announcement Bot" bind:value={username}>
-      <div class="hint">Lets you tell messages from different sends apart at a glance. Requires the bot token to have the <code>chat:write.customize</code> scope.</div>
+      <input type="text" id="username" placeholder="Leave blank to use your Slack name" bind:value={username}>
+      <div class="hint">The bot posts under your Slack name and picture unless you set something else here. Requires the bot token to have the <code>chat:write.customize</code> scope.</div>
 
       <label for="icon">Bot icon (optional)</label>
-      <input type="text" id="icon" placeholder="emoji like :loudspeaker: or an image URL" bind:value={icon}>
-      <div class="hint">
-        Warning: this site only sends messages. It cannot show you replies. If a
-        recipient responds, that reply lands in the bot's own DM with them
-        inside Slack (visible to whoever has access to the bot/app there),
-        not here. Check the bot's messages directly in Slack to see or
-        answer replies.
-      </div>
+      <input type="text" id="icon" placeholder="Leave blank to use your Slack picture, or :loudspeaker: / an image URL" bind:value={icon}>
     {/if}
+    <div class="hint">
+      Warning: this site only sends messages. It cannot show you replies. If a
+      recipient responds, that reply lands in the bot's own DM with them
+      inside Slack (visible to whoever has access to the bot/app there),
+      not here.{owner ? " Check the bot's messages directly in Slack to see or answer replies." : ' You will not see it.'}
+    </div>
   {/if}
 
   <div class="send-options">

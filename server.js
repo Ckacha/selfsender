@@ -137,8 +137,17 @@ function resolveSendToken(user, sendAs) {
   const token = slackUserId && tokenStore.get(slackUserId);
   return token
     ? { token, slackUserId }
-    : { error: "Your Slack isn't connected yet. Log in on the website at /team once to connect it, then try again." };
+    : { error: "Your Slack isn't connected yet. Log in on the website once to connect it, then try again." };
 
+}
+
+async function botIdentity(user, { username, iconEmoji, iconUrl }) {
+  const me = await profileFor(resolveSendToken(user, 'user').token).catch(() => null);
+  return {
+    username: username || (me && me.name) || undefined,
+    iconEmoji: iconEmoji || undefined,
+    iconUrl: iconUrl || (!iconEmoji && me && me.image) || undefined,
+  };
 }
 
 function isMemberInvited(session) {
@@ -225,7 +234,7 @@ app.get('/auth/callback', async (req, res) => {
       const slackUserId = memberSlackId(user) || null;
       sessions.set(sid, { role: 'member', email, hcSlackId, slackUserId, createdAt: Date.now() });
       res.setHeader('Set-Cookie', buildSessionCookie(sid));
-      return res.redirect('/team');
+      return res.redirect('/home');
     }
 
     console.warn(`Rejected selfsender login attempt from ${email || '(no email returned)'} / ${hcSlackId || '(no slack id)'}`);
@@ -311,7 +320,7 @@ app.get('/team/oauth/callback', requireMember, async (req, res) => {
     tokenStore.set(slackUserId, userToken);
     tokenStore.linkEmail(req.session.email, slackUserId);
     req.session.slackUserId = slackUserId;
-    res.redirect('/team');
+    res.redirect('/home');
   } catch (err) {
     res.status(500).send(`Slack connect failed: ${escapeHtml(err.data?.error || err.message)}`);
   }
@@ -335,7 +344,7 @@ const requireMcpAuth = requireBearerAuth({
 });
 
 app.post('/api/mcp', requireMcpAuth, async (req, res) => {
-  const server = createMcpServer(req.auth.extra.user, { resolveSendToken });
+  const server = createMcpServer(req.auth.extra.user, { resolveSendToken, botIdentity });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     transport.close();
@@ -368,7 +377,13 @@ function sendApp(req, res) {
 app.use('/assets', express.static(path.join(DIST_DIR, 'assets'), { immutable: true, maxAge: '1y' }));
 
 app.get('/', sendApp);
-app.get('/home', requireOwner, sendApp);
+app.get('/home', (req, res) => {
+  const session = getSession(req);
+  if (session && session.role === 'owner') return sendApp(req, res);
+  if (!session || session.role !== 'member' || !isMemberInvited(session)) return res.redirect('/login');
+  if (!session.slackUserId || !tokenStore.get(session.slackUserId)) return res.redirect('/team/connect');
+  sendApp(req, res);
+});
 app.get('/message', requireOwner, sendApp);
 app.get('/access', requireOwner, sendApp);
 app.get('/settings', requireOwner, sendApp);
@@ -382,11 +397,8 @@ app.get('/api/status', requireOwner, (req, res) => {
   });
 });
 
-app.get('/team', requireMember, (req, res) => {
-  if (!req.session.slackUserId || !tokenStore.get(req.session.slackUserId)) {
-    return res.redirect('/team/connect');
-  }
-  sendApp(req, res);
+app.get('/team', (req, res) => {
+  res.redirect('/home');
 });
 
 function requireAnyUser(req, res, next) {
@@ -404,7 +416,7 @@ app.get('/api/profile', requireAnyUser, async (req, res) => {
     lookup(resolveSendToken(session, 'user').token),
     session.role === 'owner' ? lookup(process.env.SLACK_BOT_TOKEN) : null,
   ]);
-  res.json({ me, bot });
+  res.json({ role: session.role, email: session.email, me, bot });
 });
 
 app.get('/api/emojis', requireAnyUser, async (req, res) => {
@@ -462,6 +474,17 @@ app.post('/api/allowlist', requireOwner, async (req, res) => {
   res.json({ ...accessList(), notice });
 });
 
+app.post('/api/allowlist/:id/resend', requireOwner, async (req, res) => {
+  const entry = allowlist.normalize(req.params.id);
+  if (!allowlist.isInvited(entry)) return res.status(404).json({ error: 'That person is not on the list.' });
+  try {
+    await invites.send(entry, PUBLIC_BASE_URL);
+    res.json({ ...accessList(), notice: `Sent the invite to ${entry} again.` });
+  } catch (err) {
+    res.status(502).json({ error: `The bot couldn't DM them on Slack (${err.data?.error || err.message}).` });
+  }
+});
+
 app.delete('/api/allowlist/:id', requireOwner, (req, res) => {
   allowlist.remove(req.params.id);
   logins.remove(allowlist.normalize(req.params.id));
@@ -503,12 +526,23 @@ app.post('/slack/interactions', express.raw({ type: 'application/x-www-form-urle
 });
 
 app.post('/api/team/send', requireMember, async (req, res) => {
-  const { recipients: recipientsRaw, message, dryRun, delayMs, groupDm } = req.body || {};
+  const { recipients: recipientsRaw, message, dryRun, delayMs, groupDm, tokenType } = req.body || {};
 
-  const token = tokenStore.get(req.session.slackUserId);
-  if (!token) {
+  const userToken = tokenStore.get(req.session.slackUserId);
+  if (!userToken) {
     return res.status(401).json({ error: 'No stored Slack token for your account. Connect Slack again at /team/connect.' });
   }
+
+  const asBot = tokenType === 'bot';
+  let identity = {};
+  if (asBot) {
+    if (!process.env.SLACK_BOT_TOKEN) return res.status(500).json({ error: 'The bot is not set up on the server.' });
+    identity = await botIdentity(req.session, {});
+    if (!identity.username) {
+      return res.status(502).json({ error: "Couldn't read your Slack name and picture, so the bot can't post as you. Reconnect Slack and try again." });
+    }
+  }
+  const token = asBot ? process.env.SLACK_BOT_TOKEN : userToken;
 
   if (typeof recipientsRaw !== 'string' || !recipientsRaw.trim()) {
     return res.status(400).json({ error: 'recipients is required (comma-separated Slack IDs or emails).' });
@@ -536,6 +570,7 @@ app.post('/api/team/send', requireMember, async (req, res) => {
       message: message.trim(),
       delayMs: Number(delayMs) > 0 ? Number(delayMs) : 1200,
       dryRun: Boolean(dryRun),
+      ...identity,
       groupDm: Boolean(groupDm),
       file,
     });
@@ -661,15 +696,14 @@ app.post('/api/send', requireOwner, async (req, res) => {
   }
 
   try {
+    const identity = asUser ? {} : await botIdentity(req.session, { username, iconEmoji, iconUrl });
     const results = await sendToRecipients({
       token,
       recipients,
       message: message.trim(),
       delayMs: Number(delayMs) > 0 ? Number(delayMs) : 1200,
       dryRun: Boolean(dryRun),
-      username: username || undefined,
-      iconEmoji: iconEmoji || undefined,
-      iconUrl: iconUrl || undefined,
+      ...identity,
       groupDm: Boolean(groupDm),
       file,
     });

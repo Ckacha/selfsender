@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { loadProfile } from './session.js';
 
   let { message = '', asBot = false, username = '', icon = '', file = null, groupDm = false } = $props();
 
@@ -11,15 +12,12 @@
   let profile = $state({ me: null, bot: null });
 
   onMount(async () => {
-    try {
-      const res = await fetch('/api/profile');
-      if (res.ok) profile = await res.json();
-    } catch (err) {}
+    profile = (await loadProfile()) || profile;
   });
 
   const iconEmoji = $derived(asBot && /^:[^:\s]+:$/.test(icon.trim()) ? icon.trim().slice(1, -1) : '');
   const iconUrl = $derived(asBot && /^https?:\/\//i.test(icon.trim()) ? icon.trim() : '');
-  const sender = $derived(asBot ? profile.bot : profile.me);
+  const sender = $derived(profile.me || (asBot ? profile.bot : null));
   const name = $derived((asBot && username.trim()) || sender?.name || (asBot ? 'selfsender' : 'You'));
   const emojiNames = $derived([...new Set([...[...message.matchAll(EMOJI)].map((m) => m[1]), ...(iconEmoji ? [iconEmoji] : [])])]);
   const fileUrl = $derived(file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '');
@@ -98,7 +96,7 @@
   </div>
   <p class="hint">
     {groupDm ? 'Sent once, in a group DM with everyone on the list.' : 'Each person gets this in their own DM.'}
-    {asBot ? 'It comes from the bot.' : 'It comes from your own Slack account.'}
+    {asBot ? 'It comes from the bot, shown with your name and picture and an APP badge.' : 'It comes from your own Slack account.'}
   </p>
 </aside>
 
