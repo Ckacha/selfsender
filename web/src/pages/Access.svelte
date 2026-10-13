@@ -40,6 +40,8 @@
     people = (await res.json()).people || [];
   }
 
+  const INVITE_LABELS = { pending: 'Invite sent, no reply yet', accepted: 'Accepted the invite', declined: 'Declined the invite' };
+
   function loginLabel(person) {
     if (!person.loggedIn) return 'Not logged in yet';
     if (!person.lastLogin) return 'Logged in';
@@ -80,10 +82,10 @@
   <ul class="people">
     {#each people as person (person.id)}
       <li>
-        <span class="dot" class:ok={person.loggedIn}></span>
+        <span class="dot" class:ok={person.loggedIn} class:declined={person.invite === 'declined' && !person.loggedIn}></span>
         <span class="who">
           <strong>{person.id}</strong>
-          <span class="hint">{loginLabel(person)}</span>
+          <span class="hint">{person.invite ? `${INVITE_LABELS[person.invite]} · ` : ''}{loginLabel(person)}</span>
         </span>
         <button type="button" onclick={() => remove(person.id)}>Remove</button>
       </li>
@@ -101,6 +103,7 @@
   .people li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: #ccc; flex: none; }
   .dot.ok { background: #1e8e3e; }
+  .dot.declined { background: #d93025; }
   .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .who strong, .who .hint { display: block; margin: 0; }
   li button { margin-top: 0; }

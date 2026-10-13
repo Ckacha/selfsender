@@ -429,7 +429,7 @@ function accessList() {
   const people = ids.map((id) => {
     const lastLogin = logins.get(id);
     const connected = Boolean(isSlackUserId(id) ? tokenStore.get(id) : tokenStore.slackIdForEmail(id));
-    return { id, lastLogin, loggedIn: Boolean(lastLogin) || connected };
+    return { id, lastLogin, loggedIn: Boolean(lastLogin) || connected, invite: invites.statusForEntry(id) };
   });
   return { ids, people };
 }
@@ -494,7 +494,11 @@ app.post('/slack/interactions', express.raw({ type: 'application/x-www-form-urle
   if (!action || action.action_id !== invites.DECLINE_ACTION) return;
 
   const invite = invites.get(action.value);
-  if (!invite || !payload.user || payload.user.id !== invite.slackUserId) return;
+  const clickedBy = payload.user && payload.user.id;
+  console.log(`Invite declined in Slack by ${clickedBy || '(unknown)'}${invite ? '' : ' (invite was not sent from this server)'}`);
+  if (!clickedBy) return;
+  if (!invite) return invites.declineUntracked(clickedBy, payload.response_url);
+  if (clickedBy !== invite.slackUserId) return;
   await invites.respond(action.value, 'declined', PUBLIC_BASE_URL);
 });
 
