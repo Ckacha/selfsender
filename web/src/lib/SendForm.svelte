@@ -19,7 +19,7 @@
   let dryRun = $state(true);
   let results = $state(null);
 
-  const asBot = $derived(tokenType === 'bot');
+  const asBot = $derived(owner && tokenType === 'bot');
   const tooBig = $derived(Boolean(picked) && picked.size > MAX_FILE_BYTES);
 
   function formatSize(bytes) {
@@ -62,9 +62,9 @@
     results = 'Sending...';
     const body = { recipients, message, dryRun, delayMs, groupDm: sendMode === 'group' };
     if (picked) body.file = { name: picked.name, data: await readFileAsBase64(picked) };
-    body.tokenType = tokenType;
     if (owner) {
       const trimmedIcon = asBot ? icon.trim() : '';
+      body.tokenType = tokenType;
       body.username = asBot ? username.trim() : '';
       body.iconEmoji = trimmedIcon.startsWith(':') ? trimmedIcon : '';
       body.iconUrl = trimmedIcon && !trimmedIcon.startsWith(':') ? trimmedIcon : '';
@@ -102,11 +102,11 @@
 <form onsubmit={send}>
   <label for="recipients">Slack ID/email</label>
   <textarea id="recipients" rows="3" placeholder="U01ABCDEF2, someone@company.com, another.person@company.com" bind:value={recipients}></textarea>
-  <div class="hint">Comma-separated. Extra spaces around each entry are ignored.</div>
+  <div class="hint">Make sure the IDs/emails are comma separated!</div>
 
   <label for="message">Message</label>
   <EmojiEditor id="message" placeholder="What should be sent to these people?" bind:value={message} />
-  <div class="hint">Emojis are also supported.</div>
+  <div class="hint">Slack emojis are supported (use <code>:</code>).</div>
 
   <label for="file">Attachment (optional)</label>
   <input type="file" id="file" class="file-input" bind:this={fileInput} onchange={(e) => pick(e.target.files)}>
@@ -136,26 +136,26 @@
     <option value="group">One group DM with everyone (max 8 people)</option>
   </select>
 
-  <label for="tokenType">Send as</label>
-  <select id="tokenType" bind:value={tokenType}>
-    <option value="user">{owner ? 'User account (SLACK_USER_TOKEN)' : 'Your Slack account'}</option>
-    <option value="bot">{owner ? 'Bot (SLACK_BOT_TOKEN)' : 'The bot, shown with your name and picture'}</option>
-  </select>
+  {#if owner}
+    <label for="tokenType">Send as</label>
+    <select id="tokenType" bind:value={tokenType}>
+      <option value="user">User account (SLACK_USER_TOKEN)</option>
+      <option value="bot">Bot (SLACK_BOT_TOKEN)</option>
+    </select>
+  {/if}
 
   {#if asBot}
-    {#if owner}
-      <label for="username">Bot display name (optional)</label>
-      <input type="text" id="username" placeholder="Leave blank to use your Slack name" bind:value={username}>
-      <div class="hint">The bot posts under your Slack name and picture unless you set something else here. Requires the bot token to have the <code>chat:write.customize</code> scope.</div>
+    <label for="username">Bot display name (optional)</label>
+    <input type="text" id="username" placeholder="Leave blank to use your Slack name" bind:value={username}>
+    <div class="hint">The bot posts under your Slack name and picture unless you set something else here. Requires the bot token to have the <code>chat:write.customize</code> scope.</div>
 
-      <label for="icon">Bot icon (optional)</label>
-      <input type="text" id="icon" placeholder="Leave blank to use your Slack picture, or :loudspeaker: / an image URL" bind:value={icon}>
-    {/if}
+    <label for="icon">Bot icon (optional)</label>
+    <input type="text" id="icon" placeholder="Leave blank to use your Slack picture, or :loudspeaker: / an image URL" bind:value={icon}>
     <div class="hint">
       Warning: this site only sends messages. It cannot show you replies. If a
       recipient responds, that reply lands in the bot's own DM with them
       inside Slack (visible to whoever has access to the bot/app there),
-      not here.{owner ? " Check the bot's messages directly in Slack to see or answer replies." : ' You will not see it.'}
+      not here. Check the bot's messages directly in Slack to see or answer replies.
     </div>
   {/if}
 

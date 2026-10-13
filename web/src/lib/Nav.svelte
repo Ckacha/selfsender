@@ -44,5 +44,6 @@
   .brand:hover { background: none; }
   .who { margin-left: auto; display: flex; align-items: center; gap: 4px; }
   .hi { font-weight: 600; }
-  .logout { color: #666; font-size: 0.9rem; }
+  .logout { margin-left: 6px; border: 1px solid #c9c9c9; background: #f5f5f5; font-size: 0.9rem; }
+  .logout:hover { background: #e9e9e9; border-color: #1a1a1a; }
 </style>

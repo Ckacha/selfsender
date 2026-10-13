@@ -72,7 +72,7 @@
     Invite people by email or Slack ID. They log in with Hack Club at
     <code>{location.origin}</code>, and their Hack Club email or linked
     Slack ID has to match an invite. Then they connect their Slack once and
-    send as themselves, or through the bot under their own name and picture. They never see your pages.
+    send as themselves, never the shared bot token, never your pages.
     The bot DMs each new invite on Slack with Accept and Decline buttons, then tells you what they picked.
   </p>
 

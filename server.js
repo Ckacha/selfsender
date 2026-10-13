@@ -526,23 +526,12 @@ app.post('/slack/interactions', express.raw({ type: 'application/x-www-form-urle
 });
 
 app.post('/api/team/send', requireMember, async (req, res) => {
-  const { recipients: recipientsRaw, message, dryRun, delayMs, groupDm, tokenType } = req.body || {};
+  const { recipients: recipientsRaw, message, dryRun, delayMs, groupDm } = req.body || {};
 
-  const userToken = tokenStore.get(req.session.slackUserId);
-  if (!userToken) {
+  const token = tokenStore.get(req.session.slackUserId);
+  if (!token) {
     return res.status(401).json({ error: 'No stored Slack token for your account. Connect Slack again at /team/connect.' });
   }
-
-  const asBot = tokenType === 'bot';
-  let identity = {};
-  if (asBot) {
-    if (!process.env.SLACK_BOT_TOKEN) return res.status(500).json({ error: 'The bot is not set up on the server.' });
-    identity = await botIdentity(req.session, {});
-    if (!identity.username) {
-      return res.status(502).json({ error: "Couldn't read your Slack name and picture, so the bot can't post as you. Reconnect Slack and try again." });
-    }
-  }
-  const token = asBot ? process.env.SLACK_BOT_TOKEN : userToken;
 
   if (typeof recipientsRaw !== 'string' || !recipientsRaw.trim()) {
     return res.status(400).json({ error: 'recipients is required (comma-separated Slack IDs or emails).' });
@@ -570,7 +559,6 @@ app.post('/api/team/send', requireMember, async (req, res) => {
       message: message.trim(),
       delayMs: Number(delayMs) > 0 ? Number(delayMs) : 1200,
       dryRun: Boolean(dryRun),
-      ...identity,
       groupDm: Boolean(groupDm),
       file,
     });
@@ -703,7 +691,6 @@ app.post('/api/send', requireOwner, async (req, res) => {
       message: message.trim(),
       delayMs: Number(delayMs) > 0 ? Number(delayMs) : 1200,
       dryRun: Boolean(dryRun),
-      ...identity,
       groupDm: Boolean(groupDm),
       file,
     });
